@@ -81,41 +81,67 @@ impl Limiter for TokenBucketMemory {
 mod tests {
     use super::*;
 
-    #[test]
-    fn bench_allow() {
-        let key = "user_123".to_string();
-        let limiter = TokenBucketMemory::new(100.0, 10.0, 1_000);
-        let result = limiter.check(key, 1.0);
-        assert!(result.allow, "Should allow user to pass through")
-    }
-
-    #[test]
-    fn bench_saturated() {
+    fn exhaust() -> Decision {
         let limiter = TokenBucketMemory::new(100.0, 10.0, 100_000);
         let key = "user_123".to_string();
 
         for _ in 0..100 {
             limiter.check(key.clone(), 1.0);
         }
-        let result = limiter.check(key, 1.0);
+        limiter.check(key, 1.0)
+    }
+
+    fn normal(size: f64, refill: f64, cap: u64) -> Decision {
+        let key = "user_123".to_string();
+        let limiter = TokenBucketMemory::new(size, refill, cap);
+        limiter.check(key, 1.0)
+    }
+
+    #[test]
+    fn bench_allow() {
+        let result = normal(100.0, 10.0, 1_000);
+        assert!(result.allow, "Should allow user to pass through")
+    }
+
+    #[test]
+    fn should_deny() {
+        let result = exhaust();
         assert!(!result.allow, "Should not allow to pass through")
     }
 
     #[test]
     #[should_panic]
     fn should_panic() {
-        TokenBucketMemory::new(-34.0, 15.0, 100);
+        normal(-34.0, 15.0, 100);
     }
 
     #[test]
     #[should_panic]
     fn should_panic2() {
-        TokenBucketMemory::new(100.0, -15.0, 100);
+        normal(100.0, -15.0, 100);
     }
 
     #[test]
     #[should_panic]
     fn should_panic3() {
-        TokenBucketMemory::new(100.0, 15.0, 0);
+        normal(100.0, 15.0, 0);
+    }
+
+    #[test]
+    fn should_return_valid_data1() {
+        let result = exhaust();
+        assert!(
+            !result.allow && result.retry_after.is_some() && result.remaining.is_some(),
+            "Should return retry_after and remaining after deny"
+        )
+    }
+
+    #[test]
+    fn should_return_valid_data2() {
+        let result = normal(100.0, 10.0, 1_000);
+        assert!(
+            result.allow && result.retry_after.is_none() && result.remaining.is_none(),
+            "Should return None after allow"
+        )
     }
 }
