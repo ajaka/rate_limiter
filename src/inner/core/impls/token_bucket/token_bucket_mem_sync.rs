@@ -1,7 +1,7 @@
 use moka::{ops::compute::Op, sync::Cache};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::inner::core::limiter::{Decision, Limiter};
+use crate::{Decision, Limiter, inner::core::impls::com::check};
 
 #[derive(Clone, Copy)]
 struct TokenBucketData {
@@ -9,22 +9,15 @@ struct TokenBucketData {
     tokens: f64,
 }
 
-pub struct TokenBucketMemory {
+pub struct TokenBucketMemorySync {
     bucket_size: f64,
     refill_rate_per_sec: f64,
     data: Cache<String, TokenBucketData>,
 }
 
-impl TokenBucketMemory {
+impl TokenBucketMemorySync {
     pub fn new(bucket_size: f64, refill_rate_per_sec: f64, max_capacity: u64) -> Self {
-        assert!(
-            bucket_size.is_finite() && bucket_size > 0.0,
-            "bucket_size must be finite and greater than 0"
-        );
-        assert!(
-            refill_rate_per_sec.is_finite() && refill_rate_per_sec > 0.0,
-            "refill_rate_per_sec must be finite and greater than 0"
-        );
+        check(bucket_size, refill_rate_per_sec);
         assert!(max_capacity > 0, "max_capacity must be greater than 0");
 
         Self {
@@ -34,22 +27,22 @@ impl TokenBucketMemory {
         }
     }
 }
-
-impl Limiter for TokenBucketMemory {
-    fn check(&self, key: String, cost: f64) -> Decision {
+impl Limiter for TokenBucketMemorySync {
+    fn check(&mut self, key: &str, cost: f64) -> Decision {
         let mut decision = Decision {
             allow: false,
             remaining: None,
             retry_after: None,
         };
-        if !cost.is_finite() || cost < 0.0 {
+
+        if !cost.is_finite() || cost < 0.0 || cost > self.bucket_size {
             return decision;
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        self.data.entry(key).and_compute_with(|e| {
+        self.data.entry(key.to_owned()).and_compute_with(|e| {
             let mut state = match e {
                 Some(entry) => entry.into_value(),
                 None => TokenBucketData {
@@ -82,18 +75,18 @@ mod tests {
     use super::*;
 
     fn exhaust() -> Decision {
-        let limiter = TokenBucketMemory::new(100.0, 10.0, 100_000);
-        let key = "user_123".to_string();
+        let mut limiter = TokenBucketMemorySync::new(3.0, 0.001, 100_000);
+        let key = "user_123";
 
-        for _ in 0..100 {
-            limiter.check(key.clone(), 1.0);
+        for _ in 0..3 {
+            limiter.check(key, 1.0);
         }
         limiter.check(key, 1.0)
     }
 
     fn normal(size: f64, refill: f64, cap: u64) -> Decision {
-        let key = "user_123".to_string();
-        let limiter = TokenBucketMemory::new(size, refill, cap);
+        let key = "user_123";
+        let mut limiter = TokenBucketMemorySync::new(size, refill, cap);
         limiter.check(key, 1.0)
     }
 

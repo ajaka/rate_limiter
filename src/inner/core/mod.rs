@@ -1,2 +1,2 @@
-pub mod limiter;
-pub mod token_bucket;
+pub mod impls;
+pub mod traits;
